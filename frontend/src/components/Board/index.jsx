@@ -1,14 +1,24 @@
-import { useContext, useEffect, useLayoutEffect, useRef } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import rough from "roughjs";
 import boardContext from "../../store/board-context";
 import { TOOL_ACTION_TYPES, TOOL_ITEMS } from "../../constants";
 import toolboxContext from "../../store/toolbox-context";
+import socket from "../../utils/socket";
 
 import classes from "./index.module.css";
 
-function Board() {
+import {
+  getSvgPathFromStroke,
+} from "../../utils/element";
+import getStroke from "perfect-freehand";
+import axios from "axios";
+
+
+function Board({ id }) {
   const canvasRef = useRef();
   const textAreaRef = useRef();
+  console.log(id)
+
   const {
     elements,
     toolActionType,
@@ -18,8 +28,64 @@ function Board() {
     textAreaBlurHandler,
     undo,
     redo,
+    setCanvasId,
+    setElements,
+    setHistory
   } = useContext(boardContext);
   const { toolboxState } = useContext(toolboxContext);
+
+  const token = localStorage.getItem("whiteboard_user_token");
+
+  const [isAuthorized, setIsAuthorized] = useState(true);
+
+  useEffect(() => {
+    if (id) {
+      // Join the canvas room (no need for userId)
+      socket.emit("joinCanvas", { canvasId: id });
+
+      // Listen for updates from other users
+      socket.on("receiveDrawingUpdate", (updatedElements) => {
+        setElements(updatedElements);
+      });
+
+      // Load initial canvas data
+      socket.on("loadCanvas", (initialElements) => {
+        setElements(initialElements);
+      });
+
+      socket.on("unauthorized", (data) => {
+        console.log(data.message);
+        alert("Access Denied: You cannot edit this canvas.");
+        setIsAuthorized(false);
+      });
+
+      return () => {
+        socket.off("receiveDrawingUpdate");
+        socket.off("loadCanvas");
+        socket.off("unauthorized");
+      };
+    }
+  }, [id]);
+
+  useEffect(() => {
+    const fetchCanvasData = async () => {
+      if (id && token) {
+        try {
+          const response = await axios.get(`https://api-whiteboard-az.onrender.com/api/canvas/load/${id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          setCanvasId(id); // Set the current canvas ID
+          setElements(response.data.elements); // Set the fetched elements
+          setHistory(response.data.elements); // Set the fetched elements
+        } catch (error) {
+          console.error("Error loading canvas:", error);
+        } finally {
+        }
+      }
+    };
+
+    fetchCanvasData();
+  }, [id, token]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -60,7 +126,8 @@ function Board() {
           break;
         case TOOL_ITEMS.BRUSH:
           context.fillStyle = element.stroke;
-          context.fill(element.path);
+          const path = new Path2D(getSvgPathFromStroke(getStroke(element.points)));
+          context.fill(path);
           context.restore();
           break;
         case TOOL_ITEMS.TEXT:
@@ -80,6 +147,7 @@ function Board() {
     };
   }, [elements]);
 
+
   useEffect(() => {
     const textarea = textAreaRef.current;
     if (toolActionType === TOOL_ACTION_TYPES.WRITING) {
@@ -89,16 +157,23 @@ function Board() {
     }
   }, [toolActionType]);
 
+  // console.log("Elements ",elements);
+
   const handleMouseDown = (event) => {
+    if (!isAuthorized) return;
     boardMouseDownHandler(event, toolboxState);
   };
 
   const handleMouseMove = (event) => {
+    if (!isAuthorized) return;
     boardMouseMoveHandler(event);
+    socket.emit("drawingUpdate", { canvasId: id, elements });
   };
 
   const handleMouseUp = () => {
+    if (!isAuthorized) return;
     boardMouseUpHandler();
+    socket.emit("drawingUpdate", { canvasId: id, elements });
   };
 
   return (

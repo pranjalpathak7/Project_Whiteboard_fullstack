@@ -103,7 +103,8 @@ export const isPointNearElement = (element, pointX, pointY) => {
         isPointCloseToLine(x1, y2, x1, y1, pointX, pointY)
       );
     case TOOL_ITEMS.BRUSH:
-      return context.isPointInPath(element.path, pointX, pointY);
+      const elPath = new Path2D(getSvgPathFromStroke(getStroke(element.points)));
+      return context.isPointInPath(elPath, pointX, pointY);
     case TOOL_ITEMS.TEXT:
       context.font = `${element.size}px Caveat`;
       context.fillStyle = element.stroke;
