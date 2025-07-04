@@ -15,7 +15,10 @@ const boardContext = createContext({
   boardMouseMoveHandler: () => {},
   boardMouseUpHandler: () => {},
   setUserLoginStatus: () => {},
-  setHistory: () => {}
+  setHistory: () => {},
+  saveCanvas: () => {},
+  clearCanvas: () => {},
+  loadCanvasElements: () => {}
 });
 
 

@@ -18,6 +18,7 @@ exports.registerUser = async (req, res) => {
         }
 
         const newUser = new User({ email, password });
+        console.log("🚀 Registering user:", email);
         await newUser.save();
 
         res.status(201).json({ message: "User registered successfully!" });

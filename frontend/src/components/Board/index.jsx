@@ -4,6 +4,7 @@ import boardContext from "../../store/board-context";
 import { TOOL_ACTION_TYPES, TOOL_ITEMS } from "../../constants";
 import toolboxContext from "../../store/toolbox-context";
 import socket from "../../utils/socket";
+import { updateCanvas } from "../../utils/api";
 
 import classes from "./index.module.css";
 
@@ -11,13 +12,10 @@ import {
   getSvgPathFromStroke,
 } from "../../utils/element";
 import getStroke from "perfect-freehand";
-import axios from "axios";
-
 
 function Board({ id }) {
   const canvasRef = useRef();
   const textAreaRef = useRef();
-  console.log(id)
 
   const {
     elements,
@@ -29,70 +27,80 @@ function Board({ id }) {
     undo,
     redo,
     setCanvasId,
-    setElements,
-    setHistory
+    canvasId,
+    isUserLoggedIn,
+    loadCanvasElements
   } = useContext(boardContext);
   const { toolboxState } = useContext(toolboxContext);
 
-  const token = localStorage.getItem("whiteboard_user_token");
-
   const [isAuthorized, setIsAuthorized] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
+  // Handle canvas ID changes
   useEffect(() => {
+    console.log("Board component received ID:", id);
     if (id) {
-      // Join the canvas room (no need for userId)
+      console.log("Setting canvas ID in Board component:", id);
+      setCanvasId(id);
+    }
+  }, [id, setCanvasId]);
+
+  // Force canvas loading when ID changes
+  useEffect(() => {
+    if (id && isUserLoggedIn) {
+      console.log("Force loading canvas elements for ID:", id);
+      // Small delay to ensure state is updated
+      setTimeout(() => {
+        loadCanvasElements(id);
+      }, 100);
+    }
+  }, [id, isUserLoggedIn]);
+
+  // Handle socket connection and canvas joining
+  useEffect(() => {
+    if (id && isUserLoggedIn) {
+      console.log("Joining canvas room:", id);
+      
+      // Join the canvas room
       socket.emit("joinCanvas", { canvasId: id });
 
       // Listen for updates from other users
       socket.on("receiveDrawingUpdate", (updatedElements) => {
-        setElements(updatedElements);
+        console.log("Received drawing update from socket:", updatedElements);
+        // Don't update elements here as they should come from the database
       });
 
       // Load initial canvas data
       socket.on("loadCanvas", (initialElements) => {
-        setElements(initialElements);
+        console.log("Received initial canvas data from socket:", initialElements);
+        // Don't update elements here as they should come from the database
       });
 
       socket.on("unauthorized", (data) => {
-        console.log(data.message);
+        console.log("Socket unauthorized:", data.message);
         alert("Access Denied: You cannot edit this canvas.");
         setIsAuthorized(false);
       });
 
       return () => {
+        console.log("Cleaning up socket listeners for canvas:", id);
         socket.off("receiveDrawingUpdate");
         socket.off("loadCanvas");
         socket.off("unauthorized");
       };
     }
-  }, [id]);
+  }, [id, isUserLoggedIn]);
 
-  useEffect(() => {
-    const fetchCanvasData = async () => {
-      if (id && token) {
-        try {
-          const response = await axios.get(`https://api-whiteboard-az.onrender.com/api/canvas/load/${id}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          setCanvasId(id); // Set the current canvas ID
-          setElements(response.data.elements); // Set the fetched elements
-          setHistory(response.data.elements); // Set the fetched elements
-        } catch (error) {
-          console.error("Error loading canvas:", error);
-        } finally {
-        }
-      }
-    };
-
-    fetchCanvasData();
-  }, [id, token]);
-
+  // Handle canvas resizing
   useEffect(() => {
     const canvas = canvasRef.current;
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    if (canvas) {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
   }, []);
 
+  // Handle keyboard shortcuts
   useEffect(() => {
     function handleKeyDown(event) {
       if (event.ctrlKey && event.key === "z") {
@@ -103,15 +111,18 @@ function Board({ id }) {
     }
 
     document.addEventListener("keydown", handleKeyDown);
-
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [undo, redo]);
 
+  // Render canvas elements
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
+    if (!canvas) return;
+
     const context = canvas.getContext("2d");
+    context.clearRect(0, 0, canvas.width, canvas.height);
     context.save();
 
     const roughCanvas = rough.canvas(canvas);
@@ -147,38 +158,70 @@ function Board({ id }) {
     };
   }, [elements]);
 
-
+  // Handle text area focus
   useEffect(() => {
     const textarea = textAreaRef.current;
-    if (toolActionType === TOOL_ACTION_TYPES.WRITING) {
+    if (toolActionType === TOOL_ACTION_TYPES.WRITING && textarea) {
       setTimeout(() => {
         textarea.focus();
       }, 0);
     }
   }, [toolActionType]);
 
-  // console.log("Elements ",elements);
-
   const handleMouseDown = (event) => {
-    if (!isAuthorized) return;
+    if (!isAuthorized || isLoading) return;
     boardMouseDownHandler(event, toolboxState);
   };
 
   const handleMouseMove = (event) => {
-    if (!isAuthorized) return;
+    if (!isAuthorized || isLoading) return;
     boardMouseMoveHandler(event);
-    socket.emit("drawingUpdate", { canvasId: id, elements });
+    
+    // Only emit socket update if we're actively drawing
+    if (id && elements.length > 0 && toolActionType === TOOL_ACTION_TYPES.DRAWING) {
+      socket.emit("drawingUpdate", { canvasId: id, elements });
+    }
   };
 
-  const handleMouseUp = () => {
-    if (!isAuthorized) return;
+  const handleMouseUp = async () => {
+    if (!isAuthorized || isLoading) return;
     boardMouseUpHandler();
-    socket.emit("drawingUpdate", { canvasId: id, elements });
+    
+    // Emit socket update for real-time collaboration
+    if (id && elements.length > 0) {
+      socket.emit("drawingUpdate", { canvasId: id, elements });
+    }
+    
+    // Save to database if user is logged in
+    if (isUserLoggedIn && canvasId) {
+      try {
+        console.log("Saving canvas to database:", { canvasId, elementsCount: elements.length });
+        await updateCanvas(canvasId, elements);
+        console.log("Canvas saved successfully!");
+      } catch (error) {
+        console.error("Failed to save canvas to database:", error);
+      }
+    }
   };
+
+  if (!isAuthorized) {
+    return (
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        height: '100vh',
+        fontSize: '1.2rem',
+        color: '#666'
+      }}>
+        You are not authorized to access this canvas.
+      </div>
+    );
+  }
 
   return (
     <>
-      {toolActionType === TOOL_ACTION_TYPES.WRITING && (
+      {toolActionType === TOOL_ACTION_TYPES.WRITING && elements.length > 0 && (
         <textarea
           type="text"
           ref={textAreaRef}
@@ -198,6 +241,7 @@ function Board({ id }) {
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
+        style={{ cursor: isLoading ? 'wait' : 'crosshair' }}
       />
     </>
   );

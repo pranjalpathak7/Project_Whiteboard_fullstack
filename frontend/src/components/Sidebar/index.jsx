@@ -4,12 +4,13 @@ import './index.min.css';
 import { useNavigate } from 'react-router-dom';
 import boardContext from '../../store/board-context';
 import { useParams } from 'react-router-dom';
-
+import { createCanvas, getUserCanvases } from '../../utils/api';
 
 const Sidebar = () => {
   const [canvases, setCanvases] = useState([]);
+  const [loading, setLoading] = useState(false);
   const token = localStorage.getItem('whiteboard_user_token');
-  const { canvasId, setCanvasId,setElements,setHistory, isUserLoggedIn, setUserLoginStatus} = useContext(boardContext);
+  const { canvasId, setCanvasId, isUserLoggedIn, setUserLoginStatus } = useContext(boardContext);
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
@@ -17,69 +18,113 @@ const Sidebar = () => {
 
   const { id } = useParams(); 
 
+  // Fetch canvases when user login status changes
   useEffect(() => {
     if (isUserLoggedIn) {
       fetchCanvases();
+    } else {
+      setCanvases([]);
     }
   }, [isUserLoggedIn]);
 
-  useEffect(() => {}, []);
+  // Handle URL parameter changes
+  useEffect(() => {
+    if (id && isUserLoggedIn) {
+      console.log("URL parameter changed to:", id);
+      setCanvasId(id);
+    }
+  }, [id, isUserLoggedIn, setCanvasId]);
 
   const fetchCanvases = async () => {
+    if (!isUserLoggedIn) return;
+    
+    setLoading(true);
     try {
-      const response = await axios.get('https://api-whiteboard-az.onrender.com/api/canvas/list', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setCanvases(response.data);
-      console.log(response.data)
+      const response = await getUserCanvases();
+      setCanvases(response);
+      console.log("Fetched canvases:", response);
       
-      if (response.data.length === 0) {
+      // If no canvases exist, create one
+      if (response.length === 0) {
+        console.log("No canvases found, creating new one");
         const newCanvas = await handleCreateCanvas();
         if (newCanvas) {
-          setCanvasId(newCanvas._id);
-          handleCanvasClick(newCanvas._id);
+          navigate(`/${newCanvas.canvasId}`);
         }
-      } else if (!canvasId && response.data.length > 0) {
-        if(!id){
-          setCanvasId(response.data[0]._id);
-          handleCanvasClick(response.data[0]._id);
-        }
+      } else if (!id && response.length > 0) {
+        // If no specific canvas in URL, navigate to first canvas
+        console.log("No canvas in URL, navigating to first canvas:", response[0]._id);
+        navigate(`/${response[0]._id}`);
       }
     } catch (error) {
       console.error('Error fetching canvases:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleCreateCanvas = async () => {
-    try {
-      const response = await axios.post('https://api-whiteboard-az.onrender.com/api/canvas/create', {}, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      console.log(response.data)  
-      fetchCanvases();
-      setCanvasId(response.data.canvasId);
-      handleCanvasClick(response.data.canvasId);
-    } catch (error) {
-      console.error('Error creating canvas:', error);
+    if (!isUserLoggedIn) {
+      alert("Please log in to create a canvas");
       return null;
     }
-  };
 
-  const handleDeleteCanvas = async (id) => {
+    setLoading(true);
     try {
-      await axios.delete(`https://api-whiteboard-az.onrender.com/api/canvas/delete/${id}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      fetchCanvases();
-      setCanvasId(canvases[0]._id);
-      handleCanvasClick(canvases[0]._id);
+      const response = await createCanvas();
+      console.log("Created new canvas:", response);
+      
+      // Refresh canvas list
+      await fetchCanvases();
+      
+      return response;
     } catch (error) {
-      console.error('Error deleting canvas:', error);
+      console.error('Error creating canvas:', error);
+      alert("Failed to create canvas. Please try again.");
+      return null;
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleCanvasClick = async (id) => {
-    navigate(`/${id}`);
+  const handleDeleteCanvas = async (canvasIdToDelete) => {
+    if (!isUserLoggedIn) {
+      alert("Please log in to delete a canvas");
+      return;
+    }
+
+    if (!confirm("Are you sure you want to delete this canvas?")) {
+      return;
+    }
+
+    try {
+      await axios.delete(`http://localhost:5000/api/canvas/delete/${canvasIdToDelete}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      // Refresh canvas list
+      await fetchCanvases();
+      
+      // If we deleted the current canvas, navigate to another one
+      if (canvasIdToDelete === id) {
+        const remainingCanvases = canvases.filter(c => c._id !== canvasIdToDelete);
+        if (remainingCanvases.length > 0) {
+          navigate(`/${remainingCanvases[0]._id}`);
+        } else {
+          navigate('/');
+        }
+      }
+    } catch (error) {
+      console.error('Error deleting canvas:', error);
+      alert("Failed to delete canvas. Please try again.");
+    }
+  };
+
+  const handleCanvasClick = (canvasId) => {
+    console.log("Canvas clicked:", canvasId);
+    console.log("Current URL id:", id);
+    console.log("Navigating to:", `/${canvasId}`);
+    navigate(`/${canvasId}`);
   };
 
   const handleLogout = () => {
@@ -99,12 +144,17 @@ const Sidebar = () => {
       return;
     }
 
+    if (!canvasId) {
+      setError("No canvas selected.");
+      return;
+    }
+
     try {
-      setError(""); // Clear previous errors
-      setSuccess(""); // Clear previous success message
+      setError("");
+      setSuccess("");
 
       const response = await axios.put(
-        `https://api-whiteboard-az.onrender.com/api/canvas/share/${canvasId}`,
+        `http://localhost:5000/api/canvas/share/${canvasId}`,
         { email },
         {
           headers: { Authorization: `Bearer ${token}` },
@@ -112,6 +162,7 @@ const Sidebar = () => {
       );
 
       setSuccess(response.data.message);
+      setEmail("");
       setTimeout(() => {
         setSuccess("");
       }, 5000);
@@ -123,31 +174,34 @@ const Sidebar = () => {
     }
   };
 
-  console.log("isUserLoggedIn:", isUserLoggedIn);
-
-
   return (
     <div className="sidebar">
       <button 
         className="create-button" 
         onClick={handleCreateCanvas} 
-        disabled={!isUserLoggedIn}
+        disabled={!isUserLoggedIn || loading}
       >
-        + Create New Canvas
+        {loading ? "Creating..." : "+ Create New Canvas"}
       </button>
+      
       <ul className="canvas-list">
         {canvases.map(canvas => (
           <li 
             key={canvas._id} 
-            className={`canvas-item ${canvas._id === canvasId ? 'selected' : ''}`}
+            className={`canvas-item ${canvas._id === id ? 'selected' : ''}`}
           >
             <span 
               className="canvas-name" 
               onClick={() => handleCanvasClick(canvas._id)}
+              style={{ cursor: 'pointer' }}
             >
-              {canvas._id}
+              Canvas {canvas._id.slice(-6)}
             </span>
-            <button className="delete-button" onClick={() => handleDeleteCanvas(canvas._id)}>
+            <button 
+              className="delete-button" 
+              onClick={() => handleDeleteCanvas(canvas._id)}
+              disabled={loading}
+            >
               del
             </button>
           </li>
@@ -157,16 +211,22 @@ const Sidebar = () => {
       <div className="share-container">
         <input
           type="email"
-          placeholder="Enter the email"
+          placeholder="Enter email to share"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          disabled={!isUserLoggedIn || !canvasId}
         />
-        <button className="share-button" onClick={handleShare} disabled={!isUserLoggedIn}>
+        <button 
+          className="share-button" 
+          onClick={handleShare} 
+          disabled={!isUserLoggedIn || !canvasId || loading}
+        >
           Share
         </button>
         {error && <p className="error-message">{error}</p>}
         {success && <p className="success-message">{success}</p>}
-    </div>
+      </div>
+      
       {isUserLoggedIn ? (
         <button className="auth-button logout-button" onClick={handleLogout}>
           Logout

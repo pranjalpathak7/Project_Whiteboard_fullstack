@@ -7,8 +7,6 @@ import {
 } from "../utils/element";
 import { updateCanvas, fetchInitialCanvasElements } from "../utils/api";
 
-const canvasId = "67a66a7c2475972d34655e4d";
-
 const boardReducer = (state, action) => {
   switch (action.type) {
     case BOARD_ACTIONS.CHANGE_TOOL: {
@@ -69,9 +67,6 @@ const boardReducer = (state, action) => {
             ...newElements[index].points,
             { x: clientX, y: clientY },
           ];
-          // newElements[index].path = new Path2D(
-          //   getSvgPathFromStroke(getStroke(newElements[index].points))
-          // );
           return {
             ...state,
             elements: newElements,
@@ -84,10 +79,14 @@ const boardReducer = (state, action) => {
       const elementsCopy = [...state.elements];
       const newHistory = state.history.slice(0, state.index + 1);
       newHistory.push(elementsCopy);
-      // updateCanvas(state.canvasId, elementsCopy);
-      // if (state.isUserLoggedIn) {
-      //   updateCanvas(state.canvasId, elementsCopy);
-      // }
+      
+      // Save to database if user is logged in and canvas ID exists
+      if (state.isUserLoggedIn && state.canvasId) {
+        console.log("Auto-saving canvas after draw up:", { canvasId: state.canvasId, elementsCount: elementsCopy.length });
+        updateCanvas(state.canvasId, elementsCopy).catch(error => {
+          console.error("Failed to save canvas:", error);
+        });
+      }
 
       return {
         ...state,
@@ -103,10 +102,15 @@ const boardReducer = (state, action) => {
       });
       const newHistory = state.history.slice(0, state.index + 1);
       newHistory.push(newElements);
-      // updateCanvas(state.canvasId, newElements);
-      // if (state.isUserLoggedIn) {
-      //   updateCanvas(state.canvasId, newElements);
-      // }
+      
+      // Save to database if user is logged in and canvas ID exists
+      if (state.isUserLoggedIn && state.canvasId) {
+        console.log("Auto-saving canvas after erase:", { canvasId: state.canvasId, elementsCount: newElements.length });
+        updateCanvas(state.canvasId, newElements).catch(error => {
+          console.error("Failed to save canvas:", error);
+        });
+      }
+      
       return {
         ...state,
         elements: newElements,
@@ -120,10 +124,15 @@ const boardReducer = (state, action) => {
       newElements[index].text = action.payload.text;
       const newHistory = state.history.slice(0, state.index + 1);
       newHistory.push(newElements);
-      // updateCanvas(state.canvasId, newElements);
-      // if (state.isUserLoggedIn) {
-      //   updateCanvas(state.canvasId, newElements);
-      // }
+      
+      // Save to database if user is logged in and canvas ID exists
+      if (state.isUserLoggedIn && state.canvasId) {
+        console.log("Auto-saving canvas after text change:", { canvasId: state.canvasId, elementsCount: newElements.length });
+        updateCanvas(state.canvasId, newElements).catch(error => {
+          console.error("Failed to save canvas:", error);
+        });
+      }
+      
       return {
         ...state,
         toolActionType: TOOL_ACTION_TYPES.NONE,
@@ -134,11 +143,14 @@ const boardReducer = (state, action) => {
     }
     case BOARD_ACTIONS.UNDO: {
       if (state.index <= 0) return state;
-      console.log("undo testing ",state.history)
-      // updateCanvas(state.canvasId, state.history[state.index - 1]);
-      // if (state.isUserLoggedIn) {
-      //   updateCanvas(state.canvasId, state.history[state.index - 1]);
-      // }
+      
+      // Save to database if user is logged in and canvas ID exists
+      if (state.isUserLoggedIn && state.canvasId) {
+        updateCanvas(state.canvasId, state.history[state.index - 1]).catch(error => {
+          console.error("Failed to save canvas:", error);
+        });
+      }
+      
       return {
         ...state,
         elements: state.history[state.index - 1],
@@ -147,10 +159,14 @@ const boardReducer = (state, action) => {
     }
     case BOARD_ACTIONS.REDO: {
       if (state.index >= state.history.length - 1) return state;
-      // updateCanvas(state.canvasId, state.history[state.index + 1]);
-      // if (state.isUserLoggedIn) {
-      //   updateCanvas(state.canvasId, state.history[state.index + 1]);
-      // }
+      
+      // Save to database if user is logged in and canvas ID exists
+      if (state.isUserLoggedIn && state.canvasId) {
+        updateCanvas(state.canvasId, state.history[state.index + 1]).catch(error => {
+          console.error("Failed to save canvas:", error);
+        });
+      }
+      
       return {
         ...state,
         elements: state.history[state.index + 1],
@@ -160,8 +176,9 @@ const boardReducer = (state, action) => {
     case BOARD_ACTIONS.SET_INITIAL_ELEMENTS: {
       return {
         ...state,
-        elements: action.payload.elements,
-        history: [action.payload.elements], 
+        elements: action.payload.elements || [],
+        history: [action.payload.elements || []], 
+        index: 0,
       };
     }
     case BOARD_ACTIONS.SET_CANVAS_ID:
@@ -174,19 +191,33 @@ const boardReducer = (state, action) => {
         ...state,
         elements: action.payload.elements,
       };
-
     case BOARD_ACTIONS.SET_HISTORY:
       return {
         ...state,
         history: [action.payload.elements],
+        index: 0,
       };
-
     case BOARD_ACTIONS.SET_USER_LOGIN_STATUS:
       return {
         ...state,
         isUserLoggedIn: action.payload.isUserLoggedIn,
       };
-        default:
+    case BOARD_ACTIONS.SAVE_CANVAS:
+      // Save to database if user is logged in and canvas ID exists
+      if (state.isUserLoggedIn && state.canvasId) {
+        updateCanvas(state.canvasId, state.elements).catch(error => {
+          console.error("Failed to save canvas:", error);
+        });
+      }
+      return state;
+    case BOARD_ACTIONS.CLEAR_CANVAS:
+      return {
+        ...state,
+        elements: [],
+        history: [[]],
+        index: 0,
+      };
+    default:
       return state;
   }
 };
@@ -203,28 +234,11 @@ const initialBoardState = {
   isUserLoggedIn: isUserLoggedIn,
 };
 
-
 const BoardProvider = ({ children }) => {
   const [boardState, dispatchBoardAction] = useReducer(
     boardReducer,
     initialBoardState
   );
-
-  // Fetch elements from the database on component mount
-  // useEffect(() => {
-  //   // Move the API call to utils/api.js
-  //   fetchInitialCanvasElements(boardState.canvasId)
-  //     .then((elements) => {
-  //       dispatchBoardAction({
-  //         type: BOARD_ACTIONS.SET_INITIAL_ELEMENTS,
-  //         payload: { elements },
-  //       });
-  //     })
-  //     .catch((error) => {
-  //       console.error("Error fetching initial canvas elements:", error);
-  //       // Optionally handle the error, e.g., set a default state or display an error message
-  //     });
-  // }, []); // Empty dependency array ensures this runs only once on mount
 
   const changeToolHandler = (tool) => {
     dispatchBoardAction({
@@ -260,40 +274,40 @@ const BoardProvider = ({ children }) => {
   };
 
   const boardMouseMoveHandler = (event) => {
-    if (boardState.toolActionType === TOOL_ACTION_TYPES.WRITING) return;
-    const { clientX, clientY } = event;
     if (boardState.toolActionType === TOOL_ACTION_TYPES.DRAWING) {
       dispatchBoardAction({
         type: BOARD_ACTIONS.DRAW_MOVE,
         payload: {
-          clientX,
-          clientY,
+          clientX: event.clientX,
+          clientY: event.clientY,
         },
       });
     } else if (boardState.toolActionType === TOOL_ACTION_TYPES.ERASING) {
       dispatchBoardAction({
         type: BOARD_ACTIONS.ERASE,
         payload: {
-          clientX,
-          clientY,
+          clientX: event.clientX,
+          clientY: event.clientY,
         },
       });
     }
   };
 
   const boardMouseUpHandler = () => {
-    if (boardState.toolActionType === TOOL_ACTION_TYPES.WRITING) return;
-    if (boardState.toolActionType === TOOL_ACTION_TYPES.DRAWING) {
+    if (boardState.toolActionType === TOOL_ACTION_TYPES.DRAWING || 
+        boardState.toolActionType === TOOL_ACTION_TYPES.ERASING) {
       dispatchBoardAction({
         type: BOARD_ACTIONS.DRAW_UP,
       });
+      
+      // Reset action type to NONE after drawing is complete
+      dispatchBoardAction({
+        type: BOARD_ACTIONS.CHANGE_ACTION_TYPE,
+        payload: {
+          actionType: TOOL_ACTION_TYPES.NONE,
+        },
+      });
     }
-    dispatchBoardAction({
-      type: BOARD_ACTIONS.CHANGE_ACTION_TYPE,
-      payload: {
-        actionType: TOOL_ACTION_TYPES.NONE,
-      },
-    });
   };
 
   const textAreaBlurHandler = (text) => {
@@ -318,6 +332,7 @@ const BoardProvider = ({ children }) => {
   }, []);
 
   const setCanvasId = (canvasId) => {
+    console.log("Setting canvas ID:", canvasId);
     dispatchBoardAction({
       type: BOARD_ACTIONS.SET_CANVAS_ID,
       payload: {
@@ -327,6 +342,7 @@ const BoardProvider = ({ children }) => {
   };
 
   const setElements = (elements) => {
+    console.log("Setting elements:", elements);
     dispatchBoardAction({
       type: BOARD_ACTIONS.SET_CANVAS_ELEMENTS,
       payload: {
@@ -334,8 +350,9 @@ const BoardProvider = ({ children }) => {
       },
     });
   };
-    // console.log("hello canvas")
+
   const setHistory = (elements) => {
+    console.log("Setting history:", elements);
     dispatchBoardAction({
       type: BOARD_ACTIONS.SET_HISTORY,
       payload: {
@@ -353,6 +370,54 @@ const BoardProvider = ({ children }) => {
     })
   }
 
+  const saveCanvas = () => {
+    dispatchBoardAction({
+      type: BOARD_ACTIONS.SAVE_CANVAS,
+    });
+  };
+
+  const clearCanvas = () => {
+    dispatchBoardAction({
+      type: BOARD_ACTIONS.CLEAR_CANVAS,
+    });
+  };
+
+  const loadCanvasElements = async (canvasId) => {
+    console.log("loadCanvasElements called with:", canvasId);
+    if (canvasId && boardState.isUserLoggedIn) {
+      try {
+        console.log("Loading canvas elements for:", canvasId);
+        const elements = await fetchInitialCanvasElements(canvasId);
+        console.log("Loaded elements:", elements);
+        dispatchBoardAction({
+          type: BOARD_ACTIONS.SET_INITIAL_ELEMENTS,
+          payload: { elements },
+        });
+      } catch (error) {
+        console.error("Error loading canvas elements:", error);
+        // If loading fails, start with empty canvas
+        dispatchBoardAction({
+          type: BOARD_ACTIONS.SET_INITIAL_ELEMENTS,
+          payload: { elements: [] },
+        });
+      }
+    } else {
+      console.log("Not loading canvas elements:", { canvasId, isUserLoggedIn: boardState.isUserLoggedIn });
+      // No canvas ID or user not logged in, start with empty canvas
+      dispatchBoardAction({
+        type: BOARD_ACTIONS.SET_INITIAL_ELEMENTS,
+        payload: { elements: [] },
+      });
+    }
+  };
+
+  // Load canvas elements when canvas ID changes
+  useEffect(() => {
+    console.log("Canvas ID changed to:", boardState.canvasId);
+    console.log("User logged in:", boardState.isUserLoggedIn);
+    loadCanvasElements(boardState.canvasId);
+  }, [boardState.canvasId, boardState.isUserLoggedIn]);
+
   const boardContextValue = {
     activeToolItem: boardState.activeToolItem,
     elements: boardState.elements,
@@ -369,7 +434,10 @@ const BoardProvider = ({ children }) => {
     setCanvasId, 
     setElements,
     setHistory,
-    setUserLoginStatus
+    setUserLoginStatus,
+    saveCanvas,
+    clearCanvas,
+    loadCanvasElements
   };
 
   return (
